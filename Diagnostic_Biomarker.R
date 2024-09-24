@@ -7,10 +7,10 @@ library(tidyverse)
 library(tidyr)
 library(stringr)
 library(limma)
+library(ggVennDiagram)
 
 
-
-# Function to combine TCGA sample ID with clinical data
+### Function to combine TCGA sample ID with clinical data
 merge_data_frames <- function(df_A, df_B) {
   # Function to extract the matching prefix from column names of TPM data
   extract_prefix <- function(x) {
@@ -41,7 +41,7 @@ merge_data_frames <- function(df_A, df_B) {
 
 
 
-# Function for processing TCGA metadata
+### Function for processing TCGA metadata
 process_dataframe <- function(df) {
   df %>%
     # Add Batch column
@@ -74,7 +74,7 @@ process_dataframe <- function(df) {
 
 
 
-# Function to impute the missing values of categorical variables with the most frequent category.
+### Function to impute the missing values of categorical variables with the most frequent category.
 mode_imputation <- function(df, column_name) {
   # Check if the column exists in the dataframe
   if (!column_name %in% names(df)) {
@@ -98,7 +98,7 @@ mode_imputation <- function(df, column_name) {
 
 
 
-# Function to align metadata(Sample Info) and log expression data
+### Function to align metadata(Sample Info) and log expression data
 align_dataframes <- function(dfA, dfB) {
   # Sort the column names of dfA and row names of dfB
   sorted_A_names <- sort(colnames(dfA))
@@ -125,7 +125,7 @@ align_dataframes <- function(dfA, dfB) {
 
 
 
-# Function to transform the syntax in the covariate data
+### Function to transform the syntax in the covariate data
 syntax_transform <- function(df) {
   # Check if the required columns exist
   if (!all(c("Batch", "Age") %in% colnames(df))) {
@@ -157,9 +157,39 @@ syntax_transform <- function(df) {
 
 
 
-# Function to set thresholds and filter results (adjusted p-value < 0.01, |log2FC| > 1)
+### Function to set thresholds and filter results (adjusted p-value < 0.01, |log2FC| > 1)
 filter_de_genes <- function(results, padj_threshold = 0.01, lfc_threshold = 1) {
   return(results[results$adj.P.Val < padj_threshold & abs(results$logFC) > lfc_threshold, ])
+}
+
+
+
+### Function to analyze consistency and rank biomarkers
+# Takes a list of biomarker genes and their differential expression results from two comparisons
+rank_biomarkers <- function(biomarkers, de_results1, de_results2) {
+  # Convert row names to a column named "gene_id" in both DE result datasets
+  de_results1 <- de_results1 %>% 
+    rownames_to_column(var = "gene_id")
+  de_results2 <- de_results2 %>% 
+    rownames_to_column(var = "gene_id")
+  
+  biomarkers %>%
+    # Convert biomarkers vector to a dataframe with a gene_id column
+    enframe(name = NULL, value = "gene_id") %>%
+    # Join with DE results
+    left_join(de_results1, by = "gene_id") %>%
+    left_join(de_results2, by = "gene_id", suffix = c("_1", "_2")) %>%
+    # Filter for consistent direction of change
+    filter(sign(logFC_1) == sign(logFC_2)) %>%
+    # Calculate ranking metrics to assess the magnitude and consistency of their expression changes
+    mutate(
+      avg_log2FC = (abs(logFC_1) + abs(logFC_2)) / 2,
+      consistency_score = pmin(abs(logFC_1), abs(logFC_2)) / 
+        pmax(abs(logFC_1), abs(logFC_2)),
+      direction = ifelse(logFC_1 > 0, "Up", "Down")
+    ) %>%
+    # Rank biomarkers
+    arrange(desc(avg_log2FC * consistency_score))
 }
 
 
@@ -592,7 +622,7 @@ results_LUAD_vs_LUSC <- topTable(fit_nsclc_2, coef="LUAD_vs_LUSC", number=Inf)
 # Filter results with thresholds and identify overlapping DE genes
 # ==================================================================
 
-## Use filter_de_genes function to gwt filtered results
+## Use filter_de_genes function for each result set to get filtered results
 # LUAD
 de_luad <- filter_de_genes(results_luad)
 # LUSC
@@ -602,11 +632,58 @@ de_LUAD_vs_Healthy <- filter_de_genes(results_LUAD_vs_Healthy)
 de_LUSC_vs_Healthy <- filter_de_genes(results_LUSC_vs_Healthy)
 de_LUAD_vs_LUSC <- filter_de_genes(results_LUAD_vs_LUSC)
 
-# ===
+# =======================================================
+# Find overlapping DE genes for LUAD and LUSC separately
+# =======================================================
 
-length(intersect(rownames(de_luad), rownames(de_LUAD_vs_Healthy)))
-length(intersect(rownames(de_lusc), rownames(de_LUSC_vs_Healthy)))
-length(intersect(rownames(de_LUAD_vs_Healthy), rownames(de_LUSC_vs_Healthy)))
-length(intersect(intersect(rownames(de_luad), rownames(de_LUAD_vs_Healthy)), 
-       intersect(rownames(de_lusc), rownames(de_LUSC_vs_Healthy))))
+# Find the intersection of LUAD vs GTEx analysis and the contrast in combined NSCLC analysis
+luad_biomarkers <- intersect(rownames(de_luad), rownames(de_LUAD_vs_Healthy))
+# Find the intersection of LUSC vs GTEx analysis and the contrast in combined NSCLC analysis
+lusc_biomarkers <- intersect(rownames(de_lusc), rownames(de_LUSC_vs_Healthy))
+
+# Visualize the overlap using Venn diagrams
+ggVennDiagram(
+  x = list(LUAD_vs_GTEx = rownames(de_luad), LUAD_in_Combined = rownames(de_LUAD_vs_Healthy)),
+  filename = "luad_biomarkers_venn.png",
+  main = "LUAD Biomarkers"
+) + scale_fill_gradient(low="grey90",high = "blue")
+
+ggVennDiagram(
+  x = list(LUSC_vs_GTEx = rownames(de_lusc), LUSC_in_Combined = rownames(de_LUSC_vs_Healthy)),
+  filename = "lusc_biomarkers_venn.png",
+  main = "LUSC Biomarkers"
+) + scale_fill_gradient(low="grey90",high = "blue")
+
+# ====================================
+# Identify potential NSCLC biomarkers
+# ====================================
+
+# Find the intersection of the biomarkers of LUAD and LUSC
+nsclc_biomarkers <- intersect(luad_biomarkers, lusc_biomarkers)
+
+# Visualize NSCLC biomarkers
+ggVennDiagram(
+  x = list(LUAD_Biomarkers = luad_biomarkers, LUSC_Biomarkers = lusc_biomarkers),
+  filename = "nsclc_biomarkers_venn.png",
+  main = "NSCLC Biomarkers"
+) + scale_fill_gradient(low="grey90",high = "blue")
+
+# =====================================================
+# Filter for genes with consistent expression patterns
+# =====================================================
+
+## Use rank_biomarkers function to analyze consistency and rank biomarkers
+# Rank LUAD biomarkers
+ranked_luad_biomarkers <- rank_biomarkers(luad_biomarkers, results_luad, 
+                                          results_LUAD_vs_Healthy)
+
+# Rank LUSC biomarkers
+ranked_lusc_biomarkers <- rank_biomarkers(lusc_biomarkers, results_lusc, 
+                                          results_LUSC_vs_Healthy)
+
+# Rank NSCLC biomarkers
+ranked_nsclc_biomarkers <- rank_biomarkers(nsclc_biomarkers, results_LUAD_vs_Healthy, 
+                                           results_LUSC_vs_Healthy)
+
+
 
