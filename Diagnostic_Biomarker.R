@@ -2,6 +2,7 @@
 # Load the required libraries
 library(TCGAbiolinks)
 library(dplyr)
+library(edgeR)
 library(ggplot2)
 library(pheatmap)
 library(tidyverse)
@@ -549,33 +550,6 @@ sum(is.na(filtered_gtex_data))
 sum(is.na(filtered_tpm_luad))
 sum(is.na(filtered_tpm_lusc))
 
-# =============================
-# 
-# =============================
-
-# 1. Boxplot
-tpm_long <- filtered_tpm_lusc %>%
-  rownames_to_column("gene") %>%
-  pivot_longer(cols = -gene, names_to = "sample", values_to = "TPM")
-
-boxplot <- ggplot(tpm_long, aes(x = sample, y = TPM)) +
-  geom_boxplot() +
-  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
-  labs(title = "Distribution of log2(TPM+1) values across samples",
-       y = "log2(TPM+1)")
-print(boxplot)
-
-# 2. PCA plot
-pca_data <- prcomp(t(filtered_tpm_lusc[rowMeans(filtered_tpm_lusc) > 0.5, ]), scale. = TRUE)
-pca_df <- as.data.frame(pca_data$x)
-pca_df$sample <- rownames(pca_df)
-
-pca_plot <- ggplot(pca_df, aes(x = PC1, y = PC2, label = sample)) +
-  geom_point() +
-  geom_text(hjust = 0, vjust = 0) +
-  labs(title = "PCA plot of samples")
-print(pca_plot)
-
 # ====================================
 # Combine data frames for DE analysis
 # ====================================
@@ -609,9 +583,19 @@ gtex_nsclc <- Reduce(function(x, y) {
 # =================================
 
 # Filter out lowly expressed genes (e.g., genes with mean TPM < 0.5 across samples)
-clean_gtex_luad <- gtex_luad[rowMeans(gtex_luad) > 0.5, ]
-clean_gtex_lusc <- gtex_lusc[rowMeans(gtex_lusc) > 0.5, ]
-clean_gtex_nsclc <- gtex_nsclc[rowMeans(gtex_nsclc) > 0.5, ]
+#clean_gtex_luad <- gtex_luad[rowMeans(gtex_luad) > 0.5, ]
+#clean_gtex_lusc <- gtex_lusc[rowMeans(gtex_lusc) > 0.5, ]
+#clean_gtex_nsclc <- gtex_nsclc[rowMeans(gtex_nsclc) > 0.5, ]
+
+# Filter out lowly expressed genes (Keep genes with TPM > 0.5 in at least 10% of the samples)
+keep_luad <- rowSums(gtex_luad > 0.5) >= ncol(gtex_luad) * 0.1
+clean_gtex_luad <- gtex_luad[keep_luad, ]
+
+keep_lusc <- rowSums(gtex_lusc > 0.5) >= ncol(gtex_lusc) * 0.1
+clean_gtex_lusc <- gtex_lusc[keep_lusc, ]
+
+keep_nsclc <- rowSums(gtex_nsclc > 0.5) >= ncol(gtex_nsclc) * 0.1
+clean_gtex_nsclc <- gtex_nsclc[keep_nsclc, ]
 
 # ========================
 # Log-transform the filtered data to log(TPM+1)
