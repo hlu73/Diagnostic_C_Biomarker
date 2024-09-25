@@ -3,11 +3,17 @@
 library(TCGAbiolinks)
 library(dplyr)
 library(ggplot2)
+library(pheatmap)
 library(tidyverse)
 library(tidyr)
 library(stringr)
 library(limma)
 library(ggVennDiagram)
+library(AnnotationDbi)
+library(biomaRt)
+library(clusterProfiler)  # For enrichment analysis
+library(org.Hs.eg.db)     # Human genome wide annotation database
+library(enrichplot)       # For visualization of enrichment results
 
 
 ### Function to combine TCGA sample ID with clinical data
@@ -190,6 +196,104 @@ rank_biomarkers <- function(biomarkers, de_results1, de_results2) {
     ) %>%
     # Rank biomarkers
     arrange(desc(avg_log2FC * consistency_score))
+}
+
+
+
+### Function to prepare a ranked list of all genes for GSEA
+prepare_gsea_input <- function(de_results, ranking_column = "logFC", id_column = NULL) {
+  # If id_column is not provided, assume Ensembl IDs are row names
+  if (is.null(id_column)) {
+    ensembl_ids <- rownames(de_results)
+  } else {
+    ensembl_ids <- de_results[[id_column]]
+  }
+  
+  # Remove version numbers from Ensembl IDs if present
+  ensembl_ids <- sub("\\.[0-9]+$", "", ensembl_ids)
+  
+  # Set up biomaRt
+  mart <- useMart("ensembl", dataset = "hsapiens_gene_ensembl")
+  
+  # Convert Ensembl IDs to Entrez IDs
+  id_map <- getBM(attributes = c("ensembl_gene_id", "entrezgene_id"),
+                  filters = "ensembl_gene_id",
+                  values = ensembl_ids,
+                  mart = mart)
+  
+  # Merge with original data
+  de_results$ensembl_gene_id <- ensembl_ids
+  de_results <- merge(de_results, id_map, by = "ensembl_gene_id", all.x = TRUE)
+  
+  # Create ranked gene list
+  ranked_genes <- de_results[[ranking_column]]
+  names(ranked_genes) <- de_results$entrezgene_id
+  
+  # Remove NA values and duplicates
+  ranked_genes <- ranked_genes[!is.na(names(ranked_genes))]
+  ranked_genes <- ranked_genes[!duplicated(names(ranked_genes))]
+  
+  # Sort the vector in descending order
+  ranked_genes <- sort(ranked_genes, decreasing = TRUE)
+  
+  # Return both the updated data frame and the ranked gene list
+  return(list(
+    updated_de_results = de_results,
+    ranked_genes = ranked_genes
+  ))
+}
+
+
+
+
+### Function to perform GSEA
+perform_gsea <- function(ranked_genes, name, pvalue_cutoff = 0.05) {
+  # Perform GO enrichment analysis using GSEA
+  go_gsea <- tryCatch({
+    gseGO(geneList = ranked_genes,
+          OrgDb = org.Hs.eg.db,
+          ont = "ALL",
+          minGSSize = 10,
+          maxGSSize = 500,
+          pvalueCutoff = pvalue_cutoff,
+          verbose = FALSE)
+  }, error = function(e) {
+    message("Error in GO enrichment: ", e$message)
+    return(NULL)
+  })
+  
+  # Perform KEGG pathway analysis using GSEA
+  kegg_gsea <- tryCatch({
+    gseKEGG(geneList = ranked_genes,
+            organism = 'hsa',
+            minGSSize = 10,
+            maxGSSize = 500,
+            pvalueCutoff = pvalue_cutoff,
+            verbose = FALSE)
+  }, error = function(e) {
+    message("Error in KEGG enrichment: ", e$message)
+    return(NULL)
+  })
+  
+  # Plot and save top GO term if results are not empty
+  if (!is.null(go_gsea) && nrow(go_gsea@result) > 0) {
+    png(paste0("GO_GSEA_plot_", name, ".png"), width = 800, height = 600)
+    print(gseaplot2(go_gsea, geneSetID = 1, title = go_gsea$Description[1]))
+    dev.off()
+  } else {
+    message("No enriched GO terms found at p-value cutoff ", pvalue_cutoff)
+  }
+  
+  # Plot and save top KEGG pathway if results are not empty
+  if (!is.null(kegg_gsea) && nrow(kegg_gsea@result) > 0) {
+    png(paste0("KEGG_GSEA_plot_", name, ".png"), width = 800, height = 600)
+    print(gseaplot2(kegg_gsea, geneSetID = 1, title = kegg_gsea$Description[1]))
+    dev.off()
+  } else {
+    message("No enriched KEGG pathways found at p-value cutoff ", pvalue_cutoff)
+  }
+  
+  return(list(go_gsea = go_gsea, kegg_gsea = kegg_gsea))
 }
 
 
@@ -619,7 +723,7 @@ results_LUSC_vs_Healthy <- topTable(fit_nsclc_2, coef="LUSC_vs_Healthy", number=
 results_LUAD_vs_LUSC <- topTable(fit_nsclc_2, coef="LUAD_vs_LUSC", number=Inf)
 
 # ==================================================================
-# Filter results with thresholds and identify overlapping DE genes
+# Filter results with thresholds
 # ==================================================================
 
 ## Use filter_de_genes function for each result set to get filtered results
@@ -685,5 +789,37 @@ ranked_lusc_biomarkers <- rank_biomarkers(lusc_biomarkers, results_lusc,
 ranked_nsclc_biomarkers <- rank_biomarkers(nsclc_biomarkers, results_LUAD_vs_Healthy, 
                                            results_LUSC_vs_Healthy)
 
+# ==========================
+# Data preparation for GSEA
+# ==========================
+
+# Prepare data for GSEA
+gsea_input_luad <- prepare_gsea_input(results_luad)
+gsea_input_lusc <- prepare_gsea_input(results_lusc)
+gsea_input_LUAD_vs_Healthy <- prepare_gsea_input(results_LUAD_vs_Healthy)
+gsea_input_LUSC_vs_Healthy <- prepare_gsea_input(results_LUSC_vs_Healthy)
+
+# Access the updated data frames and ranked gene lists
+results_luad_updated <- gsea_input_luad$updated_de_results
+ranked_gsea_luad <- gsea_input_luad$ranked_genes
+
+results_lusc_updated <- gsea_input_lusc$updated_de_results
+ranked_gsea_lusc <- gsea_input_lusc$ranked_genes
+
+results_LUAD_vs_Healthy_updated <- gsea_input_LUAD_vs_Healthy$updated_de_results
+ranked_gsea_LUAD_vs_Healthy <- gsea_input_LUAD_vs_Healthy$ranked_genes
+
+results_LUSC_vs_Healthy_updated <- gsea_input_LUSC_vs_Healthy$updated_de_results
+ranked_gsea_LUSC_vs_Healthy <- gsea_input_LUSC_vs_Healthy$ranked_genes
+
+# ===========================================================
+# Perform GO enrichment and KEGG pathway analysis using GSEA
+# ===========================================================
+
+# Perform GSEA for each dataset and get plots
+gsea_results_luad <- perform_gsea(ranked_gsea_luad, "luad", pvalue_cutoff = 0.1)
+gsea_results_lusc <- perform_gsea(ranked_gsea_lusc, "lusc", pvalue_cutoff = 0.1)
+gsea_results_LUAD_vs_Healthy <- perform_gsea(ranked_gsea_LUAD_vs_Healthy, "LUAD_vs_Healthy", pvalue_cutoff = 0.1)
+gsea_results_LUSC_vs_Healthy <- perform_gsea(ranked_gsea_LUSC_vs_Healthy, "LUSC_vs_Healthy", pvalue_cutoff = 0.1)
 
 
