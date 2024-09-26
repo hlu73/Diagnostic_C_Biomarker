@@ -8,6 +8,7 @@ library(pheatmap)
 library(tidyverse)
 library(tidyr)
 library(stringr)
+library(tibble)
 library(limma)
 library(ggVennDiagram)
 library(AnnotationDbi)
@@ -40,7 +41,7 @@ merge_data_frames <- function(df_A, df_B) {
     # Remove the temporary matching column
     select(-matching_id)  
   
-  # Rename columns if needed
+  # Rename columns
   names(result) <- c("SampID", "gender", "days_to_birth")
   
   return(result)
@@ -297,6 +298,25 @@ perform_gsea <- function(ranked_genes, name, pvalue_cutoff = 0.05) {
   return(list(go_gsea = go_gsea, kegg_gsea = kegg_gsea))
 }
 
+
+
+# Function to map "tobacco_smoking_history" from clinical data to covariate data used for DE analysis
+map_smoking_history <- function(A, B) {
+  # Create a new column in A for the extracted prefix of "SampID"
+  A$SampID_prefix <- substr(A$SampID, 1, 12)
+  
+  # Now perform a left join using "SampID_prefix" in A and "bcr_patient_barcode" in B
+  A <- merge(A, B[, c("bcr_patient_barcode", "tobacco_smoking_history")], 
+             by.x = "SampID_prefix", by.y = "bcr_patient_barcode", 
+             all.x = TRUE)
+  
+  # Drop the "SampID_prefix" and "Batch" column as they're no longer needed
+  A$SampID_prefix <- NULL
+  A$Batch <- NULL
+  
+  # Return the updated DataFrame A with the mapped column
+  return(A)
+}
 
 
 # ========================================================================
@@ -806,4 +826,53 @@ gsea_results_lusc <- perform_gsea(ranked_gsea_lusc, "lusc", pvalue_cutoff = 0.1)
 gsea_results_LUAD_vs_Healthy <- perform_gsea(ranked_gsea_LUAD_vs_Healthy, "LUAD_vs_Healthy", pvalue_cutoff = 0.1)
 gsea_results_LUSC_vs_Healthy <- perform_gsea(ranked_gsea_LUSC_vs_Healthy, "LUSC_vs_Healthy", pvalue_cutoff = 0.1)
 
+# ====================================
+# Data preparation for model training
+# ====================================
 
+# Add "tabacco_smaking history" column to the LUAD and LUSC covariate data
+clinical_ml_luad <- map_smoking_history(luad_cov_processed, clinical_luad)
+# Use mode_imputation function to fill in missing values
+clinical_ml_luad <- mode_imputation(clinical_ml_luad, "tobacco_smoking_history")
+clinical_ml_lusc <- map_smoking_history(lusc_cov_processed, clinical_lusc)
+clinical_ml_lusc <- mode_imputation(clinical_ml_lusc, "tobacco_smoking_history")
+
+# Create a copy of GTEx covariate data
+gtex_ml_cov <- gtex_cov
+# Remove the "Batch" column from the copied data frame
+gtex_ml_cov <- gtex_ml_cov[, !colnames(gtex_ml_cov) %in% "Batch"]
+# Add a "Condition" column
+gtex_ml_cov <- gtex_ml_cov %>%
+  mutate(tobacco_smoking_history = "0") %>%
+  select(1, Condition, everything())
+# Use mode_imputation function to fill in missing values
+gtex_ml_cov <- mode_imputation(gtex_ml_cov, "tobacco_smoking_history")
+
+# Combine three clinical data
+ml_clinical_data <- rbind(gtex_ml_cov, clinical_ml_luad, clinical_ml_lusc)
+
+# Transpose the combined expression data frame
+transposed_log_ml_nsclc <- as.data.frame(t(log_gtex_nsclc))
+
+# Convert row names to a column called "RowNames"
+transposed_log_ml_nsclc <- rownames_to_column(transposed_log_ml_nsclc, var = "SampID")
+
+## Align covariate data and the log expression data for the same order and sample IDs
+# Sort the row names of expression data and clinical data
+sorted_A_names <- sort(transposed_log_ml_nsclc$SampID)
+sorted_B_names <- sort(ml_clinical_data$SampID)
+    
+# Find the intersection of the sorted names
+common_names <- intersect(sorted_A_names, sorted_B_names)
+    
+# Subset dataframes to keep only the rows where SampID is in common_names
+log_tpm_transposed <- transposed_log_ml_nsclc[transposed_log_ml_nsclc$SampID %in% common_names, , drop = FALSE]
+clinical_cov_nsclc <- ml_clinical_data[ml_clinical_data$SampID %in% common_names, , drop = FALSE]
+    
+# Reorder dataframes to match the order of common_names
+log_tpm_transposed <- log_tpm_transposed[match(common_names, log_tpm_transposed$SampID), , drop = FALSE]
+clinical_cov_nsclc <- clinical_cov_nsclc[match(common_names, clinical_cov_nsclc$SampID), , drop = FALSE]
+
+# Save dataframes as CSV files
+write.csv(log_tpm_transposed, file = "NSCLC_log_model_training.csv", row.names = FALSE)
+write.csv(clinical_cov_nsclc, file = "NSCLC_clinical_model_training.csv", row.names = FALSE)
