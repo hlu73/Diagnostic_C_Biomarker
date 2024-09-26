@@ -830,6 +830,7 @@ gsea_results_LUSC_vs_Healthy <- perform_gsea(ranked_gsea_LUSC_vs_Healthy, "LUSC_
 # Data preparation for model training
 # ====================================
 
+## LUAD and LUAS covariate data
 # Add "tabacco_smaking history" column to the LUAD and LUSC covariate data
 clinical_ml_luad <- map_smoking_history(luad_cov_processed, clinical_luad)
 # Use mode_imputation function to fill in missing values
@@ -837,6 +838,7 @@ clinical_ml_luad <- mode_imputation(clinical_ml_luad, "tobacco_smoking_history")
 clinical_ml_lusc <- map_smoking_history(lusc_cov_processed, clinical_lusc)
 clinical_ml_lusc <- mode_imputation(clinical_ml_lusc, "tobacco_smoking_history")
 
+## GTEx covariate data
 # Create a copy of GTEx covariate data
 gtex_ml_cov <- gtex_cov
 # Remove the "Batch" column from the copied data frame
@@ -848,7 +850,7 @@ gtex_ml_cov <- gtex_ml_cov %>%
 # Use mode_imputation function to fill in missing values
 gtex_ml_cov <- mode_imputation(gtex_ml_cov, "tobacco_smoking_history")
 
-# Combine three clinical data
+## Combine three clinical data
 ml_clinical_data <- rbind(gtex_ml_cov, clinical_ml_luad, clinical_ml_lusc)
 
 # Transpose the combined expression data frame
@@ -874,5 +876,5 @@ log_tpm_transposed <- log_tpm_transposed[match(common_names, log_tpm_transposed$
 clinical_cov_nsclc <- clinical_cov_nsclc[match(common_names, clinical_cov_nsclc$SampID), , drop = FALSE]
 
 # Save dataframes as CSV files
-write.csv(log_tpm_transposed, file = "NSCLC_log_model_training.csv", row.names = FALSE)
-write.csv(clinical_cov_nsclc, file = "NSCLC_clinical_model_training.csv", row.names = FALSE)
+write.csv(log_tpm_transposed, file = "NSCLC_expression_model_training.csv", row.names = FALSE)
+write.csv(clinical_cov_nsclc, file = "NSCLC_labels_model_training.csv", row.names = FALSE)
