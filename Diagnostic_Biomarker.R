@@ -793,12 +793,15 @@ ranked_lusc_biomarkers <- rank_biomarkers(lusc_biomarkers, results_lusc,
 ranked_nsclc_biomarkers <- rank_biomarkers(nsclc_biomarkers, results_LUAD_vs_Healthy, 
                                            results_LUSC_vs_Healthy)
 
+<<<<<<< HEAD
 # Select the first 100 items from "gene_id"
 biomarker_subset_nsclc <- ranked_nsclc_biomarkers$gene_id[1:100]
 
 # Save the subset to a file
 write.csv(biomarker_subset_nsclc, file = "NSCLC_biomarkers_de_analysis.csv", row.names = FALSE)
 
+=======
+>>>>>>> a173d398c494b88128d55860baf8efd4b4f068d4
 # ==========================
 # Data preparation for GSEA
 # ==========================
