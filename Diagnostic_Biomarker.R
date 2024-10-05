@@ -602,11 +602,6 @@ gtex_nsclc <- Reduce(function(x, y) {
 # Filter out lowly expressed genes
 # =================================
 
-# Filter out lowly expressed genes (e.g., genes with mean TPM < 0.5 across samples)
-#clean_gtex_luad <- gtex_luad[rowMeans(gtex_luad) > 0.5, ]
-#clean_gtex_lusc <- gtex_lusc[rowMeans(gtex_lusc) > 0.5, ]
-#clean_gtex_nsclc <- gtex_nsclc[rowMeans(gtex_nsclc) > 0.5, ]
-
 # Filter out lowly expressed genes (Keep genes with TPM > 0.5 in at least 10% of the samples)
 keep_luad <- rowSums(gtex_luad > 0.5) >= ncol(gtex_luad) * 0.1
 clean_gtex_luad <- gtex_luad[keep_luad, ]
@@ -792,6 +787,12 @@ ranked_lusc_biomarkers <- rank_biomarkers(lusc_biomarkers, results_lusc,
 # Rank NSCLC biomarkers
 ranked_nsclc_biomarkers <- rank_biomarkers(nsclc_biomarkers, results_LUAD_vs_Healthy, 
                                            results_LUSC_vs_Healthy)
+
+# Select the first 100 items from "gene_id"
+biomarker_subset_nsclc <- ranked_nsclc_biomarkers$gene_id[1:100]
+
+# Save the subset to a file
+write.csv(biomarker_subset_nsclc, file = "NSCLC_biomarkers_de_analysis.csv", row.names = FALSE)
 
 # ==========================
 # Data preparation for GSEA
